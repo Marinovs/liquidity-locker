@@ -1,12 +1,22 @@
 use cosmwasm_std::{
-    entry_point, from_binary, to_binary, Addr, Binary, Deps, DepsMut, Env, MessageInfo, Response,
-    StdResult, Uint128,
+    entry_point,
+    from_binary,
+    to_binary,
+    Addr,
+    Binary,
+    Deps,
+    DepsMut,
+    Env,
+    MessageInfo,
+    Response,
+    StdResult,
+    Uint128,
 };
 use cw20::Cw20ReceiveMsg;
 
 use crate::error::ContractError;
-use crate::msg::{ConfigResponse, ExecuteMsg, InstantiateMsg, LiquidityReceiveMsg, QueryMsg};
-use crate::state::{Config, LiquidityPool, CONFIG, LP_MAP};
+use crate::msg::{ ConfigResponse, ExecuteMsg, InstantiateMsg, LiquidityReceiveMsg, QueryMsg };
+use crate::state::{ Config, LiquidityPool, CONFIG, LP_MAP };
 use crate::util;
 
 use cw2::set_contract_version;
@@ -22,7 +32,7 @@ pub fn instantiate(
     deps: DepsMut,
     _env: Env,
     _info: MessageInfo,
-    msg: InstantiateMsg,
+    msg: InstantiateMsg
 ) -> Result<Response, ContractError> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
@@ -44,40 +54,35 @@ pub fn execute(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    msg: ExecuteMsg,
+    msg: ExecuteMsg
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::UpdateConfig {
-            native_token,
-            fee_address,
-            fees_percentage,
-        } => util::execute_update_config(
-            deps.storage,
-            info.sender,
-            native_token,
-            fee_address,
-            fees_percentage,
-        ),
+        ExecuteMsg::UpdateConfig { native_token, fee_address, fees_percentage } =>
+            util::execute_update_config(
+                deps.storage,
+                info.sender,
+                native_token,
+                fee_address,
+                fees_percentage
+            ),
         ExecuteMsg::Receive(msg) => execute_receive_liquidity(deps, env, info, msg),
         ExecuteMsg::Unstake { denom } => execute_unstake(deps, env, info, denom),
     }
 }
 
-pub fn execute_receive_liquidity(
+fn execute_receive_liquidity(
     deps: DepsMut,
     env: Env,
     _info: MessageInfo,
-    wrapper: Cw20ReceiveMsg,
+    wrapper: Cw20ReceiveMsg
 ) -> Result<Response, ContractError> {
     let msg: LiquidityReceiveMsg = from_binary(&wrapper.msg)?;
     let cfg = CONFIG.load(deps.storage)?;
     match msg {
-        LiquidityReceiveMsg::Lock {
-            owner,
-            denom,
-            locktime,
-            amount,
-        } => {
+        LiquidityReceiveMsg::Lock { owner, denom, locktime, amount } => {
+            if wrapper.amount != amount {
+                return Err(ContractError::MissmatchedPayment {});
+            }
             let exists = LP_MAP.load(deps.storage, owner.clone());
             let fee = cfg.fees_percentage;
             let fee_amount = (amount * Uint128::from(fee)) / Uint128::from(100u64);
@@ -89,7 +94,7 @@ pub fn execute_receive_liquidity(
                         let found = lp_pool.get(index.unwrap());
                         let mut unwraped = found.unwrap().clone();
                         unwraped.amount += new_amount;
-                        unwraped.locktime = env.block.time.seconds() + locktime;
+                        unwraped.locktime += locktime;
                         lp_pool.remove(index.unwrap());
                         lp_pool.push(unwraped);
                         LP_MAP.save(deps.storage, owner.clone(), &lp_pool)?;
@@ -108,15 +113,17 @@ pub fn execute_receive_liquidity(
                         denom.clone(),
                         "cw20".to_string(),
                         fee_amount,
-                        cfg.fee_address,
+                        cfg.fee_address
                     )?;
-                    Ok(Response::default()
-                        .add_message(fee_msg)
-                        .add_attribute("action", "lock_liquidity_pool")
-                        .add_attribute("lp_owner", owner)
-                        .add_attribute("lp_denom", denom)
-                        .add_attribute("lp_amount", new_amount)
-                        .add_attribute("locktime", locktime.to_string()))
+                    Ok(
+                        Response::default()
+                            .add_message(fee_msg)
+                            .add_attribute("action", "lock_liquidity_pool")
+                            .add_attribute("lp_owner", owner)
+                            .add_attribute("lp_denom", denom)
+                            .add_attribute("lp_amount", new_amount)
+                            .add_attribute("locktime", locktime.to_string())
+                    )
                 }
 
                 Err(_) => {
@@ -138,26 +145,28 @@ pub fn execute_receive_liquidity(
                         denom.clone(),
                         "cw20".to_string(),
                         fee_amount,
-                        cfg.fee_address,
+                        cfg.fee_address
                     )?;
-                    Ok(Response::default()
-                        .add_message(fee_msg)
-                        .add_attribute("action", "lock_liquidity_pool")
-                        .add_attribute("lp_owner", owner)
-                        .add_attribute("lp_denom", denom)
-                        .add_attribute("lp_amount", amount)
-                        .add_attribute("locktime", locktime.to_string()))
+                    Ok(
+                        Response::default()
+                            .add_message(fee_msg)
+                            .add_attribute("action", "lock_liquidity_pool")
+                            .add_attribute("lp_owner", owner)
+                            .add_attribute("lp_denom", denom)
+                            .add_attribute("lp_amount", amount)
+                            .add_attribute("locktime", locktime.to_string())
+                    )
                 }
             }
         }
     }
 }
 
-pub fn execute_unstake(
+fn execute_unstake(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    denom: String,
+    denom: String
 ) -> Result<Response, ContractError> {
     let found = LP_MAP.load(deps.storage, info.sender.clone());
 
@@ -176,16 +185,14 @@ pub fn execute_unstake(
                     denom.clone(),
                     "cw20".to_string(),
                     lp.amount,
-                    info.sender.clone(),
+                    info.sender.clone()
                 )?;
 
                 lp_pool.remove(index.unwrap());
 
                 LP_MAP.save(deps.storage, info.sender.clone(), &lp_pool)?;
 
-                Ok(Response::default()
-                    .add_attribute("action", "execute_unstake")
-                    .add_message(msg))
+                Ok(Response::default().add_attribute("action", "execute_unstake").add_message(msg))
             } else {
                 Err(ContractError::NoLPFound {})
             }
