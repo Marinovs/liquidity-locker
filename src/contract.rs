@@ -23,10 +23,11 @@ use cw2::set_contract_version;
 
 const CONTRACT_NAME: &str = "Liquidity Locker";
 const CONTRACT_VERSION: &str = "1.0";
-// const THREE_MONTH: u64 = 7889400u64;
+const ONE_MONTH: u64 = 2629800u64;
 const THREE_MONTH: u64 = 7889400u64;
 const SIX_MONTH: u64 = 15778800u64;
 const ONE_YEAR: u64 = 31557600u64;
+const TWO_YEAR: u64 = 63115200u64;
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     deps: DepsMut,
@@ -57,13 +58,14 @@ pub fn execute(
     msg: ExecuteMsg
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::UpdateConfig { native_token, fee_address, fees_percentage } =>
+        ExecuteMsg::UpdateConfig { native_token, fee_address, fees_percentage, is_enabled } =>
             util::execute_update_config(
                 deps.storage,
                 info.sender,
                 native_token,
                 fee_address,
-                fees_percentage
+                fees_percentage,
+                is_enabled
             ),
         ExecuteMsg::Receive(msg) => execute_receive_liquidity(deps, env, info, msg),
         ExecuteMsg::Unstake { denom } => execute_unstake(deps, env, info, denom),
@@ -78,10 +80,22 @@ fn execute_receive_liquidity(
 ) -> Result<Response, ContractError> {
     let msg: LiquidityReceiveMsg = from_binary(&wrapper.msg)?;
     let cfg = CONFIG.load(deps.storage)?;
+    if !cfg.enabled {
+        return Err(ContractError::Disabled {});
+    }
     match msg {
         LiquidityReceiveMsg::Lock { owner, denom, locktime, amount } => {
             if wrapper.amount != amount {
                 return Err(ContractError::MissmatchedPayment {});
+            }
+            if
+                locktime != ONE_MONTH &&
+                locktime != THREE_MONTH &&
+                locktime != SIX_MONTH &&
+                locktime != ONE_YEAR &&
+                locktime != TWO_YEAR
+            {
+                return Err(ContractError::LockedPeriodWrong {});
             }
             let exists = LP_MAP.load(deps.storage, owner.clone());
             let fee = cfg.fees_percentage;
@@ -127,10 +141,6 @@ fn execute_receive_liquidity(
                 }
 
                 Err(_) => {
-                    if locktime != THREE_MONTH && locktime != SIX_MONTH && locktime != ONE_YEAR {
-                        return Err(ContractError::LockedPeriodWrong {});
-                    }
-
                     let lp = LiquidityPool {
                         owner: owner.clone(),
                         denom: denom.clone(),
@@ -169,7 +179,10 @@ fn execute_unstake(
     denom: String
 ) -> Result<Response, ContractError> {
     let found = LP_MAP.load(deps.storage, info.sender.clone());
-
+    let cfg = CONFIG.load(deps.storage)?;
+    if !cfg.enabled {
+        return Err(ContractError::Disabled {});
+    }
     match found {
         Ok(mut lp_pool) => {
             let index = lp_pool.iter().position(|x| x.denom == denom);

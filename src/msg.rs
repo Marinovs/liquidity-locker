@@ -1,5 +1,5 @@
-use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Addr, Uint128};
+use cosmwasm_schema::{ cw_serde, QueryResponses };
+use cosmwasm_std::{ Addr, Uint128 };
 use cw20::Cw20ReceiveMsg;
 
 #[cw_serde]
@@ -15,6 +15,7 @@ pub enum ExecuteMsg {
         native_token: String,
         fee_address: Addr,
         fees_percentage: u64,
+        is_enabled: bool,
     },
     Receive(Cw20ReceiveMsg),
     Unstake {
@@ -50,8 +51,8 @@ pub struct LiquidityResponse {
 #[cw_serde]
 #[derive(QueryResponses)]
 pub enum QueryMsg {
-    #[returns(ConfigResponse)]
-    GetConfig {},
-    #[returns(LiquidityResponse)]
-    GetLiquidity { address: Addr },
+    #[returns(ConfigResponse)] GetConfig {},
+    #[returns(LiquidityResponse)] GetLiquidity {
+        address: Addr,
+    },
 }
