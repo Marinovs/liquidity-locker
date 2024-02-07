@@ -8,7 +8,7 @@ mod test_module {
     // use injective_std::types::cosmos::bank::v1beta1::{ MsgSend, QueryBalanceRequest };
     // use crate::contract::{ execute, instantiate, query };
     use crate::error::ContractError;
-    use crate::msg::{ ExecuteMsg, InstantiateMsg, QueryMsg, CollectionResponse };
+    use crate::msg::{ ExecuteMsg, InstantiateMsg, QueryMsg };
     use cosmwasm_std::{ Coin, BankMsg, Uint128 };
     // use injective_test_tube::{ Account, Module, InjectiveTestApp, Wasm, Bank };
     // use injective_std::types::cosmos::bank::v1beta1::{ QueryBalanceRequest, MsgSend };
@@ -163,20 +163,14 @@ mod test_module {
     #[test]
     fn testSeconds() {
         let current_time = mock_env().block.time.seconds();
-        let current_ms = current_time * 1000;
-        let claim_cooldown = 60;
-        let now = OffsetDateTime::now_utc();
-        let utc_now = Utc::now();
-        let seconds_since_epoch = utc_now.timestamp();
-
-        let next_cooldown = current_time + claim_cooldown;
-
-        println!(
-            "Now: {seconds_since_epoch}\nCurrent Time: {:}s\nCurrent Time (MS): {:}\nCooldown: {:}s\nNext Cooldown: {:}s\n",
+        let current_block = mock_env().block.height.to_string();
+        let id = format!(
+            "{}-{:x}-{}",
+            "inj1tx74j0uslp4pr5neyxxxgajh6gx5s9lnahpp5r".to_string(),
             current_time,
-            current_ms,
-            claim_cooldown,
-            next_cooldown
+            current_block.to_string()
         );
+
+        println!("Random string {}", id);
     }
 }

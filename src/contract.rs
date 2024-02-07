@@ -8,6 +8,7 @@ use cosmwasm_std::{
     DepsMut,
     Env,
     MessageInfo,
+    Order,
     Response,
     StdResult,
     Uint128,
@@ -15,7 +16,14 @@ use cosmwasm_std::{
 use cw20::Cw20ReceiveMsg;
 
 use crate::error::ContractError;
-use crate::msg::{ ConfigResponse, ExecuteMsg, InstantiateMsg, LiquidityReceiveMsg, QueryMsg };
+use crate::msg::{
+    ConfigResponse,
+    ExecuteMsg,
+    InstantiateMsg,
+    LiquiditiesResponse,
+    LiquidityReceiveMsg,
+    QueryMsg,
+};
 use crate::state::{ Config, LiquidityPool, CONFIG, LP_MAP };
 use crate::util;
 
@@ -75,7 +83,7 @@ pub fn execute(
 fn execute_receive_liquidity(
     deps: DepsMut,
     env: Env,
-    _info: MessageInfo,
+    info: MessageInfo,
     wrapper: Cw20ReceiveMsg
 ) -> Result<Response, ContractError> {
     let msg: LiquidityReceiveMsg = from_binary(&wrapper.msg)?;
@@ -84,10 +92,7 @@ fn execute_receive_liquidity(
         return Err(ContractError::Disabled {});
     }
     match msg {
-        LiquidityReceiveMsg::Lock { owner, denom, locktime, amount } => {
-            if wrapper.amount != amount {
-                return Err(ContractError::MissmatchedPayment {});
-            }
+        LiquidityReceiveMsg::Lock { id, locktime } => {
             if
                 locktime != ONE_MONTH &&
                 locktime != THREE_MONTH &&
@@ -97,77 +102,74 @@ fn execute_receive_liquidity(
             {
                 return Err(ContractError::LockedPeriodWrong {});
             }
-            let exists = LP_MAP.load(deps.storage, owner.clone());
+            let amount = wrapper.amount;
+            let denom = info.sender.clone();
+            let owner = deps.api.addr_validate(&wrapper.sender.clone())?;
             let fee = cfg.fees_percentage;
             let fee_amount = (amount * Uint128::from(fee)) / Uint128::from(100u64);
             let new_amount = amount - fee_amount;
-            match exists {
-                Ok(mut lp_pool) => {
-                    let index = lp_pool.iter().position(|x| x.denom == denom);
-                    if index.is_some() {
-                        let found = lp_pool.get(index.unwrap());
-                        let mut unwraped = found.unwrap().clone();
-                        unwraped.amount += new_amount;
-                        unwraped.locktime += locktime;
-                        lp_pool.remove(index.unwrap());
-                        lp_pool.push(unwraped);
-                        LP_MAP.save(deps.storage, owner.clone(), &lp_pool)?;
-                    } else {
-                        let lp = LiquidityPool {
-                            owner: owner.clone(),
-                            denom: denom.clone(),
-                            amount: new_amount,
-                            locktime: env.block.time.seconds() + locktime,
-                        };
-                        lp_pool.push(lp);
-                        LP_MAP.save(deps.storage, owner.clone(), &lp_pool)?;
+            if id.is_some() {
+                let exists = LP_MAP.load(deps.storage, id.unwrap());
+                match exists {
+                    Ok(mut lp_pool) => {
+                        if lp_pool.owner != owner {
+                            return Err(ContractError::InvalidOwner {});
+                        }
+                        lp_pool.amount += new_amount;
+                        lp_pool.locktime += locktime;
+                        LP_MAP.save(deps.storage, lp_pool.clone().id, &lp_pool)?;
+                        let fee_msg = util::transfer_token_message(
+                            denom.to_string().clone(),
+                            "cw20".to_string(),
+                            fee_amount,
+                            cfg.fee_address
+                        )?;
+                        return Ok(
+                            Response::default()
+                                .add_message(fee_msg)
+                                .add_attribute("action", "lock_liquidity_pool")
+                                .add_attribute("lp_owner", owner)
+                                .add_attribute("lp_denom", denom)
+                                .add_attribute("lp_amount", new_amount)
+                                .add_attribute("locktime", locktime.to_string())
+                        );
                     }
-
-                    let fee_msg = util::transfer_token_message(
-                        denom.clone(),
-                        "cw20".to_string(),
-                        fee_amount,
-                        cfg.fee_address
-                    )?;
-                    Ok(
-                        Response::default()
-                            .add_message(fee_msg)
-                            .add_attribute("action", "lock_liquidity_pool")
-                            .add_attribute("lp_owner", owner)
-                            .add_attribute("lp_denom", denom)
-                            .add_attribute("lp_amount", new_amount)
-                            .add_attribute("locktime", locktime.to_string())
-                    )
-                }
-
-                Err(_) => {
-                    let lp = LiquidityPool {
-                        owner: owner.clone(),
-                        denom: denom.clone(),
-                        locktime: env.block.time.seconds() + locktime,
-                        amount: new_amount,
-                    };
-
-                    let lp_pool = vec![lp];
-                    LP_MAP.save(deps.storage, owner.clone(), &lp_pool)?;
-
-                    let fee_msg = util::transfer_token_message(
-                        denom.clone(),
-                        "cw20".to_string(),
-                        fee_amount,
-                        cfg.fee_address
-                    )?;
-                    Ok(
-                        Response::default()
-                            .add_message(fee_msg)
-                            .add_attribute("action", "lock_liquidity_pool")
-                            .add_attribute("lp_owner", owner)
-                            .add_attribute("lp_denom", denom)
-                            .add_attribute("lp_amount", amount)
-                            .add_attribute("locktime", locktime.to_string())
-                    )
+                    Err(_) => {
+                        return Err(ContractError::NoLPFound {});
+                    }
                 }
             }
+
+            let id = format!("{}-{}-{:x}", owner.clone(), denom.clone(), env.block.time.seconds());
+            if LP_MAP.load(deps.storage, id.clone()).is_ok() {
+                return Err(ContractError::InvalidID {});
+            }
+
+            let lp = LiquidityPool {
+                id: id.clone(),
+                owner: owner.clone(),
+                denom: denom.to_string().clone(),
+                locktime: env.block.time.seconds() + locktime,
+                amount: new_amount,
+            };
+
+            LP_MAP.save(deps.storage, id.clone(), &lp)?;
+
+            let fee_msg = util::transfer_token_message(
+                denom.to_string().clone(),
+                "cw20".to_string(),
+                fee_amount,
+                cfg.fee_address
+            )?;
+            Ok(
+                Response::default()
+                    .add_message(fee_msg)
+                    .add_attribute("action", "lock_liquidity_pool")
+                    .add_attribute("lp_owner", owner)
+                    .add_attribute("lp_denom", denom)
+                    .add_attribute("lp_amount", amount)
+                    .add_attribute("locktime", locktime.to_string())
+            )
         }
     }
 }
@@ -176,39 +178,36 @@ fn execute_unstake(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    denom: String
+    id: String
 ) -> Result<Response, ContractError> {
-    let found = LP_MAP.load(deps.storage, info.sender.clone());
+    let found = LP_MAP.load(deps.storage, id.clone());
     let cfg = CONFIG.load(deps.storage)?;
     if !cfg.enabled {
         return Err(ContractError::Disabled {});
     }
     match found {
-        Ok(mut lp_pool) => {
-            let index = lp_pool.iter().position(|x| x.denom == denom);
-            if index.is_some() {
-                let lp = lp_pool.get(index.unwrap()).unwrap();
-                let current_time = env.block.time.seconds();
+        Ok(lp) => {
+            let current_time = env.block.time.seconds();
 
-                if current_time < lp.locktime {
-                    return Err(ContractError::Locktime {});
-                }
-
-                let msg = util::transfer_token_message(
-                    denom.clone(),
-                    "cw20".to_string(),
-                    lp.amount,
-                    info.sender.clone()
-                )?;
-
-                lp_pool.remove(index.unwrap());
-
-                LP_MAP.save(deps.storage, info.sender.clone(), &lp_pool)?;
-
-                Ok(Response::default().add_attribute("action", "execute_unstake").add_message(msg))
-            } else {
-                Err(ContractError::NoLPFound {})
+            if current_time < lp.locktime {
+                return Err(ContractError::Locktime {});
             }
+
+            let msg = util::transfer_token_message(
+                lp.denom.clone(),
+                "cw20".to_string(),
+                lp.amount,
+                info.sender.clone()
+            )?;
+
+            LP_MAP.remove(deps.storage, id.clone());
+            Ok(
+                Response::default()
+                    .add_attribute("action", "execute_unstake")
+                    .add_attribute("lp_id", id.clone())
+                    .add_attribute("amount", lp.amount)
+                    .add_message(msg)
+            )
         }
         Err(_) => Err(ContractError::NoLPFound {}),
     }
@@ -218,7 +217,8 @@ fn execute_unstake(
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::GetConfig {} => to_binary(&query_config(deps)?),
-        QueryMsg::GetLiquidity { address } => to_binary(&query_liquidity(deps, address)?),
+        QueryMsg::GetLiquidity { id } => to_binary(&query_liquidity(deps, id)?),
+        QueryMsg::GetLiquidities { address } => to_binary(&query_liquidities(deps, address)?),
     }
 }
 
@@ -231,7 +231,32 @@ pub fn query_config(deps: Deps) -> StdResult<ConfigResponse> {
     })
 }
 
-pub fn query_liquidity(deps: Deps, address: Addr) -> StdResult<Vec<LiquidityPool>> {
-    let liquidity = LP_MAP.load(deps.storage, address.clone())?;
+pub fn query_liquidities(deps: Deps, address: Option<Addr>) -> StdResult<LiquiditiesResponse> {
+    let liquidities: StdResult<Vec<LiquidityPool>> = LP_MAP.range(
+        deps.storage,
+        None,
+        None,
+        Order::Ascending
+    )
+        .map(|item| item.map(|(_, v)| v))
+        .collect();
+
+    match liquidities {
+        Ok(mut lps) => {
+            if address.is_some() {
+                let unwrapped_address = address.unwrap();
+                lps = lps
+                    .into_iter()
+                    .filter(|lp| { lp.owner == unwrapped_address })
+                    .collect();
+            }
+            Ok(LiquiditiesResponse { liquidities: lps })
+        }
+        Err(_) => Ok(LiquiditiesResponse { liquidities: Vec::new() }),
+    }
+}
+
+pub fn query_liquidity(deps: Deps, id: String) -> StdResult<LiquidityPool> {
+    let liquidity = LP_MAP.load(deps.storage, id.clone())?;
     Ok(liquidity)
 }

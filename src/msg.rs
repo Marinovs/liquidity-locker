@@ -2,6 +2,8 @@ use cosmwasm_schema::{ cw_serde, QueryResponses };
 use cosmwasm_std::{ Addr, Uint128 };
 use cw20::Cw20ReceiveMsg;
 
+use crate::state::LiquidityPool;
+
 #[cw_serde]
 pub struct InstantiateMsg {
     pub owner: Addr,
@@ -26,10 +28,8 @@ pub enum ExecuteMsg {
 #[cw_serde]
 pub enum LiquidityReceiveMsg {
     Lock {
-        owner: Addr,
-        denom: String,
+        id: Option<String>,
         locktime: u64,
-        amount: Uint128,
     },
 }
 
@@ -49,10 +49,18 @@ pub struct LiquidityResponse {
 }
 
 #[cw_serde]
+pub struct LiquiditiesResponse {
+    pub liquidities: Vec<LiquidityPool>,
+}
+
+#[cw_serde]
 #[derive(QueryResponses)]
 pub enum QueryMsg {
     #[returns(ConfigResponse)] GetConfig {},
+    #[returns(LiquiditiesResponse)] GetLiquidities {
+        address: Option<Addr>,
+    },
     #[returns(LiquidityResponse)] GetLiquidity {
-        address: Addr,
+        id: String,
     },
 }

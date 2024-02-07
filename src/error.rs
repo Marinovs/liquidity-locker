@@ -15,5 +15,6 @@ pub enum ContractError {
     #[error("Payment Failed")] PaymentFailed {},
     #[error("Fee Payment Failed")] FeePaymentFailed {},
     #[error("Disabled")] Disabled {},
-    #[error("Missmatched Payment")] MissmatchedPayment {},
+    #[error("Invalid Owner")] InvalidOwner {},
+    #[error("Invalid ID")] InvalidID {},
 }
